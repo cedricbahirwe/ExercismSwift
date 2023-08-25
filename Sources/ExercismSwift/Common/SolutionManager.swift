@@ -15,67 +15,80 @@ public class SolutionManager {
         fileManager = FileManager.default
     }
 
-    func getOrCreateSolutionDir() -> URL? {
-        do {
-            let docsFolder = try fileManager.url(
-                for: .documentDirectory,
-                in: .userDomainMask,
-                appropriateFor: nil,
-                create: true)
+    private func getOrCreateSolutionDir() throws -> URL? {
+        let docsFolder = try fileManager.url(
+            for: .documentDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true)
 
-            let solutionDir = docsFolder.appendingPathComponent("\(solution.exercise.trackId)/\(solution.exercise.id)/", isDirectory: true)
+        let solutionDir = docsFolder.appendingPathComponent("\(solution.exercise.trackId)/\(solution.exercise.id)/", isDirectory: true)
 
-            if !fileManager.fileExists(atPath: solutionDir.relativePath) {
-                do {
-                    try fileManager.createDirectory(atPath: solutionDir.path, withIntermediateDirectories: true)
-                } catch let error {
-                    print("Error creating solution directory: \(error.localizedDescription)")
-                }
-            }
-
-            return solutionDir
-        } catch let error {
-            print("URL error: \(error.localizedDescription)")
-            return nil
+        if !fileManager.fileExists(atPath: solutionDir.relativePath) {
+            try fileManager.createDirectory(atPath: solutionDir.path, withIntermediateDirectories: true)
         }
+
+        return solutionDir
     }
 
     // TODO(kirk - 20/07/22) - Handle exceptions properly
 
-    func downloadFile(at path: String, to destination: URL, completed: @escaping ((Bool) -> Void)) {
+    private func downloadFile(at path: String, to destination: URL, completed: @escaping ((Bool, ExercismClientError?) -> Void)) {
         let url = URL(string: path, relativeTo: URL(string: solution.fileDownloadBaseUrl))!
         client.download(from: url, to: destination, headers: [:]) { result in
             switch result {
             case .success(_):
-                completed(true)
+                completed(true, nil)
             case .failure:
-                completed(false)
+                completed(false, .builderError(message: "Error creating exercise directory"))
             }
         }
     }
 
-    public func download(_ completed: @escaping (URL?, Error?) -> Void) {
-        if let solutionDir = getOrCreateSolutionDir() {
-            for file in solution.files {
-                do {
+    public func download(_ completed: @escaping (URL?, ExercismClientError?) -> Void) {
+        let group = DispatchGroup()
+        let queue = DispatchQueue(label: "com.filedownload.queue", attributes: .concurrent)
+        var clientError: ExercismClientError?
+        var solutionDirectory: URL?
+
+        do {
+            if let solutionDir = try getOrCreateSolutionDir() {
+                solutionDirectory = solutionDir
+                for file in solution.files {
+                    group.enter()
                     var fileComponents = file.split(separator: "/")
                     let fileLen = fileComponents.count
                     var destPath = solutionDir
                     let fileName = fileComponents.last!.description
+
                     if fileLen > 1 {
                         fileComponents.removeLast()
                         destPath = solutionDir.appendingPathComponent(fileComponents.joined(separator: "/"), isDirectory: true)
                         try fileManager.createDirectory(atPath: destPath.path, withIntermediateDirectories: true)
                     }
+
                     downloadFile(at: file,
-                                  to: destPath.appendingPathComponent(fileName)) { complete in
-                        if complete {
-                            completed(solutionDir, nil)
+                                 to: destPath.appendingPathComponent(fileName)) { complete, error  in
+                        if let error = error {
+                            clientError = error
+                        }
+
+                        if !complete {
+                            clientError = .builderError(message: "Error creating exercise directory")
                         }
                     }
-                } catch let error {
-                    completed(nil, error)
+                    group.leave()
                 }
+            }
+        } catch let error {
+            clientError = .builderError(message: error.localizedDescription)
+        }
+
+        group.notify(queue: queue) {
+            if let error = clientError {
+                completed(nil, error)
+            } else {
+                completed(solutionDirectory, nil)
             }
         }
     }
