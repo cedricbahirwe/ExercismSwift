@@ -12,4 +12,12 @@ extension ExercismClient {
             completed: completed
         )
     }
+    
+    @available(iOS 13.0.0, *)
+    public func validateToken() async throws -> ValidateTokenResponse {
+        try await networkClient.get(
+            urlBuilder.url(path: .validateToken),
+            headers: headers()
+        )
+    }
 }

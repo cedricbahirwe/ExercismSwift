@@ -44,6 +44,19 @@ public class SolutionManager {
             }
         }
     }
+    
+    
+    @available(iOS 13.0.0, *)
+    private func downloadFile(at path: String, to destination: URL) async throws -> (Bool, ExercismClientError?) {
+        let url = URL(string: path, relativeTo: URL(string: solution.fileDownloadBaseUrl))!
+        
+        do {
+            _ = try await client.download(from: url, to: destination, headers: [:])
+            return (true, nil)
+        } catch {
+            return (false, .builderError(message: "Error creating exercise directory"))
+        }
+    }
 
     public func download(_ completed: @escaping (URL?, ExercismClientError?) -> Void) {
         let group = DispatchGroup()
@@ -89,6 +102,56 @@ public class SolutionManager {
                 completed(nil, error)
             } else {
                 completed(solutionDirectory, nil)
+            }
+        }
+    }
+    
+    @available(iOS 13.0.0, *)
+    public func download() async throws -> (URL?, ExercismClientError?) {
+        let group = DispatchGroup()
+        let queue = DispatchQueue(label: "com.filedownload.queue", attributes: .concurrent)
+        var clientError: ExercismClientError?
+        var solutionDirectory: URL?
+
+        do {
+            if let solutionDir = try getOrCreateSolutionDir() {
+                solutionDirectory = solutionDir
+                for file in solution.files {
+                    group.enter()
+                    var fileComponents = file.split(separator: "/")
+                    let fileLen = fileComponents.count
+                    var destPath = solutionDir
+                    let fileName = fileComponents.last!.description
+
+                    if fileLen > 1 {
+                        fileComponents.removeLast()
+                        destPath = solutionDir.appendingPathComponent(fileComponents.joined(separator: "/"), isDirectory: true)
+                        try fileManager.createDirectory(atPath: destPath.path, withIntermediateDirectories: true)
+                    }
+                    
+                    let (complete, error) = try await downloadFile(at: file, to: destPath.appendingPathComponent(fileName))
+                    
+                    if let error = error {
+                        clientError = error
+                    }
+
+                    if !complete {
+                        clientError = .builderError(message: "Error creating exercise directory")
+                    }
+                    group.leave()
+                }
+            }
+        } catch let error {
+            clientError = .builderError(message: error.localizedDescription)
+        }
+
+        return await withCheckedContinuation { continuation in
+            group.notify(queue: queue) {
+                if let error = clientError {
+                    continuation.resume(returning: (nil, error))
+                } else {
+                    continuation.resume(returning: (solutionDirectory, nil))
+                }
             }
         }
     }

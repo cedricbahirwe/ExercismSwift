@@ -29,6 +29,28 @@ extension ExercismClient {
             completed: completed
         )
     }
+    
+    @available(iOS 13.0.0, *)
+    public func solutions(for track: String?, withStatus status: SolutionStatus?, mentoringStatus: MentoringStatus?) async throws -> ListResponse<Solution> {
+        var params: [String: String] = [:]
+        if let t = track {
+            params["track_slug"] = t
+        }
+
+        if let s = status {
+            params["status"] = s.rawValue
+        }
+
+        if let mt = mentoringStatus {
+            params["mentoring_status"] = mt.rawValue
+        }
+
+        return try await networkClient.get(
+            urlBuilder.url(path: .solutions,
+                params: params),
+            headers: headers()
+        )
+    }
 
     public func downloadSolution(
         with id: String = "latest",
@@ -66,4 +88,37 @@ extension ExercismClient {
             }
         }
     }
+    
+    
+    @available(iOS 13.0.0, *)
+    public func downloadSolution(
+        with id: String = "latest",
+        for track: String? = nil,
+        exercise: String? = nil
+    ) async throws -> ExerciseDocument {
+        var params: [String: String] = [:]
+        
+        if let t = track {
+            params["track_id"] = t
+        }
+        
+        if let e = exercise {
+            params["exercise_id"] = e
+        }
+        
+        do {
+            let solution: SolutionFile = try await networkClient.get(urlBuilder.url(path: .solutionsFile,
+                                                                                    params: params,
+                                                                                    urlArgs: id),
+                                                                     headers: headers())
+            let solutionManager = SolutionManager(with: solution, client: networkClient)
+            let (url, _) = try await solutionManager.download()
+            if let url = url {
+                return ExerciseDocument(exerciseDirectory: url, solution: solution)
+            }  else {
+                throw ExercismClientError.builderError(message: "Error creating exercise directory")
+            }
+        }
+    }
+    
 }
